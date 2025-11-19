@@ -1,0 +1,376 @@
+import java.util.*;
+
+//Iterator interface
+interface Iterator<T> {
+    boolean hasNext();
+    T next();
+}
+
+//Model classes
+class Course {
+    private String id;
+    private String name;
+    private String assignedFacultyId;
+
+    public Course(String id, String name, String facultyId) {
+        this.id = id;
+        this.name = name;
+        this.assignedFacultyId = facultyId;
+    }
+    public String getId() { return id; }
+    public String getName() { return name; }
+    public String getAssignedFacultyId() { return assignedFacultyId; }
+
+    @Override
+    public String toString() {
+        return name + " (" + id + ")";
+    }
+}
+
+class FacultyMember {
+    private String id;
+    private String name;
+
+    public FacultyMember(String id, String name) {
+        this.id = id;
+        this.name = name;
+    }
+    public String getId() { return id; }
+    public String getName() { return name; }
+
+    @Override
+    public String toString() {
+        return name + " (" + id + ")";
+    }
+}
+
+class Room {
+    private String id;
+
+    public Room(String id) {
+        this.id = id;
+    }
+
+    public String getId() { return id; }
+
+    @Override
+    public String toString() {
+        return id;
+    }
+}
+
+class ScheduleEntry {
+    private Course course;
+    private FacultyMember faculty;
+    private Room room;
+    private String slot;
+
+    public ScheduleEntry(Course course, FacultyMember faculty, Room room, String slot) {
+        this.course = course;
+        this.faculty = faculty;
+        this.room = room;
+        this.slot = slot;
+    }
+
+    public Course getCourse() { return course; }
+    public FacultyMember getFaculty() { return faculty; }
+    public Room getRoom() { return room; }
+    public String getSlot() { return slot; }
+
+    @Override
+    public String toString() {
+        return "Course: " + course.getName() + ", Faculty: " + faculty.getName() +
+               ", Room: " + room.getId() + ", Slot: " + slot;
+    }
+}
+
+//Timetable collection + Iterator
+class Timetable {
+    private List<ScheduleEntry> entries = new ArrayList<>();
+
+    public void addEntry(ScheduleEntry entry) { entries.add(entry); }
+    public List<ScheduleEntry> getEntries() { return entries; }
+
+    public Iterator<ScheduleEntry> createIterator() {
+        return new TimetableIterator(entries);
+    }
+}
+
+class TimetableIterator implements Iterator<ScheduleEntry> {
+    private final List<ScheduleEntry> list;
+    private int pos = 0;
+
+    public TimetableIterator(List<ScheduleEntry> list) {
+        this.list = list;
+    }
+
+    public boolean hasNext() { return pos < list.size(); }
+    public ScheduleEntry next() { return list.get(pos++); }
+}
+
+//ClashDetector
+class ClashDetector {
+    // check if a room is free at a given slot in the timetable
+    public static boolean isRoomFree(Timetable timetable, String roomId, String slot) {
+        for (ScheduleEntry e : timetable.getEntries()) {
+            if (e.getRoom().getId().equals(roomId) && e.getSlot().equals(slot)) {
+                return false;
+            }
+        }
+        return true;
+    }
+    // check if a faculty is free at a given slot in the timetable
+    public static boolean isFacultyFree(Timetable timetable, String facultyId, String slot) {
+        for (ScheduleEntry e : timetable.getEntries()) {
+            if (e.getFaculty().getId().equals(facultyId) && e.getSlot().equals(slot)) {
+                return false;
+            }
+        }
+        return true;
+    }
+}
+
+
+// ConflictResolver - find next available slot for (faculty, room)
+class ConflictResolver {
+
+    // Find next slot index in slots list where both faculty and room are free.
+    // Returns slot index or -1 if none available.
+    public static int findNextFreeSlotIndex(Timetable timetable, 
+                                            String facultyId, String roomId,
+                                            List<String> slots, int startIndex) {
+        for (int i = startIndex; i < slots.size(); i++) {
+            String slot = slots.get(i);
+            if (ClashDetector.isFacultyFree(timetable, facultyId, slot) &&
+                ClashDetector.isRoomFree(timetable, roomId, slot)) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    // If no room free in given slot, try other rooms for same slot (returns roomId or null)
+    public static String findAnyFreeRoomAtSlot(Timetable timetable, List<Room> rooms, String slot) {
+        for (Room r : rooms) {
+            if (ClashDetector.isRoomFree(timetable, r.getId(), slot)) return r.getId();
+        }
+        return null;
+    }
+}
+
+// TimetableGenerator (greedy)
+class TimetableGenerator {
+    public static boolean generateTimetable(List<Course> courses,
+                                            Map<String, FacultyMember> facultyMap,
+                                            List<Room> rooms,
+                                            List<String> slots,
+                                            Timetable timetable) {
+        for (Course course : courses) {
+            String facId = course.getAssignedFacultyId();
+            FacultyMember faculty = facultyMap.get(facId);
+            if (faculty == null) {
+                System.out.println("Warning: Faculty id " + facId + " not found for course " + course);
+                return false;
+            }
+            boolean placed = false;
+            // Try each slot from beginning
+            for (int si = 0; si < slots.size() && !placed; si++) {
+                String slot = slots.get(si);
+                // If faculty busy at slot, skip
+                if (!ClashDetector.isFacultyFree(timetable, facId, slot)) continue;
+
+                // Try any room available at this slot
+                for (Room room : rooms) {
+                    if (ClashDetector.isRoomFree(timetable, room.getId(), slot)) {
+                        // place here
+                        ScheduleEntry entry = new ScheduleEntry(course, faculty, room, slot);
+                        timetable.addEntry(entry);
+                        placed = true;
+                        break;
+                    }
+                }
+            }
+            if (!placed) {
+                // iterate slots and rooms more thoroughly
+                for (int si = 0; si < slots.size() && !placed; si++) {
+                    String slot = slots.get(si);
+                    // find any room free at this slot
+                    String freeRoomId = ConflictResolver.findAnyFreeRoomAtSlot(timetable, rooms, slot);
+                    if (freeRoomId != null && ClashDetector.isFacultyFree(timetable, facId, slot)) {
+                        Room chosen = null;
+                        for (Room r : rooms) if (r.getId().equals(freeRoomId)) { chosen = r; break; }
+                        ScheduleEntry entry = new ScheduleEntry(course, faculty, chosen, slot);
+                        timetable.addEntry(entry);
+                        placed = true;
+                        break;
+                    }
+                }
+            }
+            if (!placed) {
+                // No slot+room found for this course => cannot generate full clash-free schedule
+                System.out.println("Could not place course " + course + " (faculty: " + faculty.getName() + ").");
+                return false;
+            }
+        }
+        return true;
+    }
+}
+
+// Client viewers - use iterator
+class Student {
+    private String name;
+    public Student(String name) { this.name = name; }
+
+    public void viewTimetable(Timetable timetable) {
+        System.out.println("\nTimetable for Student: " + name);
+        Iterator<ScheduleEntry> it = timetable.createIterator();
+        while (it.hasNext()) {
+            System.out.println(it.next());
+        }
+    }
+}
+
+class FacultyViewer {
+    private String facultyId;
+    private String name;
+    public FacultyViewer(String id, String name) {
+        this.facultyId = id;
+        this.name = name;
+    }
+
+    public void viewTimetable(Timetable timetable) {
+        System.out.println("\nTimetable for Faculty: " + name);
+        Iterator<ScheduleEntry> it = timetable.createIterator();
+        boolean found = false;
+        while (it.hasNext()) {
+            ScheduleEntry e = it.next();
+            if (e.getFaculty().getId().equals(facultyId)) {
+                System.out.println(e);
+                found = true;
+            }
+        }
+        if (!found) System.out.println("No scheduled entries for " + name);
+    }
+}
+
+// Main
+public class SmartTimetable{
+    public static void main(String[] args) {
+        Scanner sc = new Scanner(System.in);
+
+        // predefined slots
+        List<String> slots = Arrays.asList(
+            "9:00 - 10:00",
+            "10:00 - 11:00",
+            "11:00 - 12:00",
+            "12:00 - 13:00",
+            "14:00 - 15:00",
+            "15:00 - 16:00"
+        );
+
+        System.out.println("Time slots used:");
+        for (int i = 0; i < slots.size(); i++) System.out.println((i+1) + ". " + slots.get(i));
+        System.out.println();
+
+        // Input Rooms
+        System.out.print("Enter number of rooms: ");
+        int roomCount = readInt(sc);
+        List<Room> rooms = new ArrayList<>();
+        for (int i = 1; i <= roomCount; i++) {
+            System.out.print("Room " + i + " ID (e.g., R101): ");
+            String rid = sc.nextLine().trim();
+            rooms.add(new Room(rid));
+        }
+
+        // Input Faculty
+        System.out.print("\nEnter number of faculties: ");
+        int facCount = readInt(sc);
+        Map<String, FacultyMember> facultyMap = new HashMap<>();
+        for (int i = 1; i <= facCount; i++) {
+            System.out.print("Faculty " + i + " ID: ");
+            String fid = sc.nextLine().trim();
+            System.out.print("Faculty " + i + " Name: ");
+            String fname = sc.nextLine().trim();
+            FacultyMember fm = new FacultyMember(fid, fname);
+            facultyMap.put(fid, fm);
+        }
+
+        // Input Courses
+        System.out.print("\nEnter number of courses to schedule: ");
+        int courseCount = readInt(sc);
+        List<Course> courses = new ArrayList<>();
+        for (int i = 1; i <= courseCount; i++) {
+            System.out.println("\nCourse " + i + " details:");
+            System.out.print("Course ID: ");
+            String cid = sc.nextLine().trim();
+            System.out.print("Course Name: ");
+            String cname = sc.nextLine().trim();
+
+            System.out.println("Assign faculty to this course from the list below (enter Faculty ID):");
+            for (FacultyMember f : facultyMap.values()) {
+                System.out.println(" - " + f.getId() + " : " + f.getName());
+            }
+            System.out.print("Faculty ID: ");
+            String assignedF = sc.nextLine().trim();
+
+            // if faculty id not found, ask again
+            while (!facultyMap.containsKey(assignedF)) {
+                System.out.print("Invalid Faculty ID. Enter again: ");
+                assignedF = sc.nextLine().trim();
+            }
+
+            courses.add(new Course(cid, cname, assignedF));
+        }
+
+        // Generate timetable
+        Timetable timetable = new Timetable();
+        System.out.println("\nGenerating timetable...");
+        boolean ok = TimetableGenerator.generateTimetable(courses, facultyMap, rooms, slots, timetable);
+
+        if (!ok) {
+            System.out.println("Timetable generation failed: insufficient slots/rooms or missing data.");
+            System.out.println("Try increasing slots or adding more rooms/faculty.");
+            sc.close();
+            return;
+        }
+
+        // Display entire timetable
+        List<ScheduleEntry> sorted = new ArrayList<>(timetable.getEntries());
+        sorted.sort(Comparator.comparing(ScheduleEntry::getSlot));
+        System.out.println("\n=== Final Clash-Free Timetable ===");
+        for (ScheduleEntry e : sorted) System.out.println(e);
+
+        // Allow viewing as Student or Faculty
+        System.out.print("\nEnter Student Name to view (press Enter for 'Student1'): ");
+        String studentName = sc.nextLine().trim();
+        if (studentName.isEmpty()) studentName = "Student1";
+        Student studentViewer = new Student(studentName);
+        studentViewer.viewTimetable(timetable);
+
+        System.out.print("\nEnter Faculty ID to view (e.g., F01): ");
+        String viewFacId = sc.nextLine().trim();
+        if (!facultyMap.containsKey(viewFacId)) {
+            System.out.println("Faculty ID not found, showing first faculty instead.");
+            viewFacId = facultyMap.keySet().iterator().next();
+        }
+        FacultyMember viewFac = facultyMap.get(viewFacId);
+        FacultyViewer facultyViewer = new FacultyViewer(viewFac.getId(), viewFac.getName());
+        facultyViewer.viewTimetable(timetable);
+
+        System.out.println("\nDone. Timetable generated without clashes (greedy algorithm).");
+        sc.close();
+    }
+
+    private static int readInt(Scanner sc) {
+        while (true) {
+            String line = sc.nextLine().trim();
+            try {
+                int v = Integer.parseInt(line);
+                if (v < 0) { System.out.print("Enter non-negative integer: "); continue; }
+                return v;
+            } catch (NumberFormatException ex) {
+                System.out.print("Invalid number, enter again: ");
+            }
+        }
+    }
+}
